@@ -72,9 +72,12 @@ class NotificationListenerEventBusTest {
         val event = mapOf("type" to "posted", "package" to "com.example.chat")
 
         NotificationListenerEventBus.emit(event)
+        assertFalse(NotificationListenerEventBus.hasEventSink)
         NotificationListenerEventBus.attach(sink)
+        assertTrue(NotificationListenerEventBus.hasEventSink)
         NotificationListenerEventBus.emit(event)
         NotificationListenerEventBus.detachCurrent()
+        assertFalse(NotificationListenerEventBus.hasEventSink)
         NotificationListenerEventBus.emit(event)
 
         assertEquals(listOf(event), sink.events)

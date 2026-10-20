@@ -18,6 +18,9 @@ object NotificationListenerEventBus {
     var isConnected: Boolean = false
         private set
 
+    val hasEventSink: Boolean
+        get() = synchronized(lock) { eventSink != null }
+
     fun attach(sink: EventChannel.EventSink) {
         synchronized(lock) {
             eventSink = sink

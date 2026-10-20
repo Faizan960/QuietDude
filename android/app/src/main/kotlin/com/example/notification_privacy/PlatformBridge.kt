@@ -12,10 +12,11 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Read-only capability and notification-observation bridge.
+ * Capability, observation, app-catalog, and narrow dismissal bridge.
  *
- * Enforcement is deliberately unimplemented. Responses must never imply that
- * Quietdude can suppress, dismiss, or rewrite notifications.
+ * Preview rewriting remains unsupported. Dismissal is post-arrival, best-effort,
+ * and only accepts opaque event IDs; raw notification keys never cross the
+ * bridge.
  */
 class PlatformBridge(
     private val activity: Activity,
@@ -78,10 +79,48 @@ class PlatformBridge(
             "submitEnforcementRequest" -> result.success(
                 mapOf(
                     "status" to "unsupported",
-                    "message" to "Notification enforcement is not implemented in this build.",
+                    "message" to "Notifications cannot be modified before display.",
                 ),
             )
+            "getLaunchableApps" -> result.success(launchableApps())
+            "requestNotificationDismissal" -> {
+                val eventId = call.argument<String>("eventId")?.trim()
+                val packageName = call.argument<String>("package")?.trim()
+                if (eventId.isNullOrEmpty() || packageName.isNullOrEmpty()) {
+                    result.success(
+                        mapOf(
+                            "status" to "failed",
+                            "message" to "Invalid dismissal request.",
+                        ),
+                    )
+                } else {
+                    result.success(
+                        NotificationDismissalRegistry.dismiss(eventId, packageName),
+                    )
+                }
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun launchableApps(): Map<String, Any?> {
+        return try {
+            val apps = LaunchableAppCatalog.query(activity).map { app ->
+                mapOf(
+                    "package" to app.packageName,
+                    "label" to app.label,
+                    "icon" to app.iconPng,
+                )
+            }
+            mapOf(
+                "status" to "ok",
+                "apps" to apps,
+            )
+        } catch (_: Exception) {
+            mapOf(
+                "status" to "error",
+                "message" to "The app list could not be loaded.",
+            )
         }
     }
 
@@ -100,8 +139,8 @@ class PlatformBridge(
                 },
                 detail = when {
                     listenerAccess == "granted" && listenerConnected ->
-                        "Notification listener connected. Sanitized metadata observation only; " +
-                            "notification enforcement is not implemented."
+                        "Notification listener connected. Reads allow-listed metadata only; " +
+                            "explicit app-targeted dismissal is reported separately."
                     listenerAccess == "granted" ->
                         "Notification access is granted, but the listener is not connected. " +
                             "Android may reconnect it when needed."
@@ -115,8 +154,8 @@ class PlatformBridge(
             ),
             capability(
                 id = "preview_redaction",
-                status = "scaffolded",
-                detail = "Requires notification access. Preview rewriting is not implemented yet.",
+                status = "unsupported",
+                detail = "Android does not provide a supported cross-app preview rewrite API.",
             ),
             capability(
                 id = "do_not_disturb_control",
@@ -125,8 +164,30 @@ class PlatformBridge(
             ),
             capability(
                 id = "notification_dismissal",
-                status = "requires_permission",
-                detail = "Dismissal depends on notification access and Android version limits.",
+                status = when {
+                    listenerAccess == "granted" &&
+                        listenerConnected &&
+                        NotificationDismissalRegistry.activeService != null ->
+                        "partially_supported"
+                    listenerAccess == "granted" -> "unavailable"
+                    listenerAccess == "not_granted" -> "requires_permission"
+                    listenerAccess == "unsupported" -> "unsupported"
+                    else -> "unavailable"
+                },
+                detail = when {
+                    listenerAccess == "granted" &&
+                        listenerConnected &&
+                        NotificationDismissalRegistry.activeService != null ->
+                        "Post-arrival dismissal is best-effort. The notification may " +
+                            "appear briefly, alert, or remain on another device."
+                    listenerAccess == "granted" ->
+                        "Notification access is granted, but the listener is disconnected."
+                    listenerAccess == "not_granted" ->
+                        "Notification access is required to dismiss after arrival."
+                    listenerAccess == "unsupported" ->
+                        "Notification dismissal is not available on this device."
+                    else -> "Notification dismissal status could not be determined."
+                },
             ),
             capability(
                 id = "keyword_filtering",
