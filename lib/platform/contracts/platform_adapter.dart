@@ -1,4 +1,5 @@
 import '../../domain/actions/rule_action.dart';
+import '../../domain/models/notification_listener.dart';
 import '../../domain/models/platform_capability.dart';
 import '../../domain/models/rule_execution.dart';
 
@@ -51,6 +52,14 @@ abstract interface class PlatformAdapter {
   Future<PermissionState> checkPermission(PlatformPermission permission);
 
   Future<bool> requestSettingsAccess(PlatformPermission permission);
+
+  Future<NotificationListenerStatus> getNotificationListenerStatus();
+
+  Future<bool> openNotificationListenerSettings();
+
+  Stream<SanitizedNotificationEvent> get notificationEvents;
+
+  Stream<NotificationConnectionStatus> get notificationConnectionEvents;
 
   Future<RuleExecutionResult> submitEnforcementRequest(
     EnforcementRequest request,

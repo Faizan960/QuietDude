@@ -29,6 +29,7 @@ enum CapabilityStatus {
   implemented('implemented', 'Implemented'),
   requiresPermission('requires_permission', 'Requires permission'),
   partiallySupported('partially_supported', 'Partially supported'),
+  unavailable('unavailable', 'Unavailable'),
   unsupported('unsupported', 'Unsupported');
 
   const CapabilityStatus(this.wireName, this.label);

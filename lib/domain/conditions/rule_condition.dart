@@ -103,7 +103,9 @@ final class AppCondition extends RuleCondition {
 
   @override
   bool matches(RuleContext context) {
-    return context.foregroundAppPackage == packageName;
+    final activePackage =
+        context.notificationSourcePackage ?? context.foregroundAppPackage;
+    return activePackage == packageName;
   }
 }
 

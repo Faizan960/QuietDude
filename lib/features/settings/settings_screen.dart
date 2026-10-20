@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../permissions/widgets/capability_status_list.dart';
+import '../permissions/widgets/notification_access_card.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -17,8 +18,11 @@ class SettingsScreen extends ConsumerWidget {
         title: const Text('Settings'),
         actions: [
           IconButton(
-            tooltip: 'Refresh capabilities',
-            onPressed: () => ref.invalidate(platformCapabilitiesProvider),
+            tooltip: 'Refresh status',
+            onPressed: () {
+              ref.invalidate(notificationListenerStatusProvider);
+              ref.invalidate(platformCapabilitiesProvider);
+            },
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -26,6 +30,8 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
+          const NotificationAccessCard(),
+          const SizedBox(height: 16),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -61,8 +67,10 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                         const SizedBox(height: 8),
                         OutlinedButton(
-                          onPressed: () =>
-                              ref.invalidate(platformCapabilitiesProvider),
+                          onPressed: () {
+                            ref.invalidate(notificationListenerStatusProvider);
+                            ref.invalidate(platformCapabilitiesProvider);
+                          },
                           child: const Text('Try again'),
                         ),
                       ],
@@ -85,7 +93,8 @@ class SettingsScreen extends ConsumerWidget {
                   Text(
                     'Quietdude is local-first. Rules stay in a local SQLite '
                     'database. There is no account, backend, analytics, or '
-                    'advertising SDK, and notification content is never stored.',
+                    'advertising SDK. Notification titles and bodies are never '
+                    'stored, logged, or sent anywhere.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -107,10 +116,10 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'This build is a scaffold. Rule storage and deterministic '
-                    'evaluation are implemented, but notification access, '
-                    'system interruption controls, geofencing, and BLE '
-                    'proximity are not. No permissions are requested at launch.',
+                    'Rule storage, deterministic evaluation, and sanitized '
+                    'notification observation are implemented. Notification '
+                    'enforcement, interruption-filter control, geofencing, and '
+                    'BLE proximity are not. Nothing is requested at launch.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),

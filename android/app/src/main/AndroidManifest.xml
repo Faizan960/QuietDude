@@ -26,6 +26,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Notification access is special access granted by the user in system
+             settings. The system binds this service with the signature
+             permission below; there is no runtime permission prompt. -->
+        <service
+            android:name=".QuietdudeNotificationListenerService"
+            android:exported="true"
+            android:label="Quietdude notification access"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

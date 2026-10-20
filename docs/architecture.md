@@ -17,7 +17,8 @@ Application wiring (app/providers.dart)
     │                                      │
     └── PlatformAdapter ◄──────────────────┘
              │
-             ├── AndroidPlatformAdapter ──► MethodChannel ──► Kotlin
+             ├── AndroidPlatformAdapter ──► MethodChannel ──► Kotlin bridge
+             │                             EventChannel ◄── listener events
              ├── IosPlatformAdapter (static, honest capability reporting)
              └── UnsupportedPlatformAdapter (desktop/web)
 ```
@@ -40,17 +41,21 @@ owns the Material 3 theme.
 Pure Dart. No Flutter widgets, Drift, or Android imports.
 
 - `models/`: `PrivacyRule`, `RuleContext`, `RulePriority`, `RuleExecutionStatus`,
-  `RuleExecutionResult`, `PlatformCapability`.
+  `RuleExecutionResult`, `PlatformCapability`, `NotificationListenerStatus`,
+  `SanitizedNotificationEvent`, `NotificationObservation`.
 - `conditions/`: sealed `RuleCondition` variants and time-window semantics.
   Implemented: always, time window (including overnight), foreground app, and
-  wearable-nearby flag.
+  wearable-nearby flag. Time windows use local wall-clock fields, start-inclusive
+  and end-exclusive bounds; equal endpoints retain all-day compatibility. See
+  [notification_listener.md](notification_listener.md#time-window-semantics).
 - `actions/`: sealed `RuleAction` variants. Implemented: hide previews, silence
   notifications, dismiss notifications, discreet alert. Each action maps to the
   platform capability it would require.
 - `policy/`: `RulePriorityPolicy` resolves matching rules.
 - `engine/`: `DefaultRuleEngine` evaluates rules and builds an `ExecutionPlan`.
-  `RuleEnforcementService` submits that plan to a `PlatformAdapter` and returns
-  the platform's structured result.
+  `NotificationObservationService` evaluates sanitized posted events in memory
+  and never submits a plan. `RuleEnforcementService` submits a plan to a
+  `PlatformAdapter` only when explicitly invoked; the app does not invoke it yet.
 
 ### Data (`lib/data`)
 
@@ -72,15 +77,20 @@ repository mapping. Do not replace the schema with an opaque JSON blob.
 ### Platform (`lib/platform`)
 
 `contracts/platform_adapter.dart` defines capability queries, permission checks,
-settings access, and enforcement submission. Results are typed and include
-`Applied`, `Partially applied`, `Unsupported`, `Permission required`, `Failed`,
-and `Not applicable`. `contracts/platform_channel.dart` wraps `MethodChannel` and
-`EventChannel` so platform errors are typed.
+listener status, settings access, notification-event streaming, connection-status
+streaming, and enforcement submission. Results are typed and include `Applied`,
+`Partially applied`, `Unsupported`, `Permission required`, `Failed`, and
+`Not applicable`. `contracts/platform_channel.dart` wraps `MethodChannel` and two
+`EventChannel`s so platform errors are typed.
 
-The Android adapter parses native capability maps and returns a conservative
-fallback if the bridge is unavailable. The iOS adapter reports capabilities as
-unsupported or planned without pretending Android behavior exists. The desktop
-adapter reports planned capabilities only.
+The Android adapter parses native capability/status maps and sanitized events,
+ignores malformed payloads, caches one event stream to avoid duplicate native
+subscriptions, and returns conservative failure states if the bridge is
+unavailable. Notification-stream errors become
+a content-free `NotificationEventStreamException`. The iOS adapter reports
+capabilities as unsupported or planned and returns an unsupported listener status
+with empty event and connection streams. The desktop adapter reports planned
+capabilities only.
 
 ## Rule evaluation and conflict resolution
 
@@ -102,16 +112,58 @@ adapter reports planned capabilities only.
 ## Android bridge
 
 `MainActivity` registers `PlatformBridge` on
-`com.example.notification_privacy/platform`. Methods:
+`com.example.notification_privacy/platform`, the notification-event EventChannel
+on `com.example.notification_privacy/platform_events`, and the connection-status
+EventChannel on `com.example.notification_privacy/listener_status_events`.
+Methods:
 
-- `getCapabilities`: returns read-only capability maps.
+- `getCapabilities`: returns read-only capability maps, including listener
+  connection state.
 - `checkPermission`: reports notification-listener and DND policy access.
+- `getNotificationListenerStatus`: returns typed `access` and `connection`.
+- `openNotificationListenerSettings`: opens notification-access settings.
 - `openSettings`: opens the relevant Android settings screen only after a user
   action.
 - `submitEnforcementRequest`: always returns `unsupported` in this build.
 
-No listener service, geofence, BLE scan, or enforcement code exists yet. The
-manifest declares no special or runtime permissions.
+`QuietdudeNotificationListenerService` receives posted/removed callbacks and
+updates connection state. Connection transitions are emitted once on the separate
+status channel; notification events and status changes never share a payload.
+The service is declared with
+`android.permission.BIND_NOTIFICATION_LISTENER_SERVICE`; no runtime permission or
+unrelated manifest permission is added. Events are sanitized before crossing the
+EventChannel and are never persisted. See
+[notification_listener.md](notification_listener.md).
+
+## Application lifecycle
+
+`QuietdudeApp` observes app lifecycle changes. On resume it invalidates listener
+status and capability providers so a return from Android settings reflects the
+user's actual choice. It also listens to typed native connection transitions and
+re-queries status/capabilities when the listener connects or disconnects without
+polling. A single delayed reconciliation query follows each transition so a
+settings write that settles just after the service binding/disconnect is
+reflected. Flutter backgrounding is not treated as a listener disconnect;
+Android owns that service lifecycle. A fresh process starts from native in-memory state
+and a fresh query, not from persisted connection claims. Opening settings does
+not optimistically alter state.
+
+## Notification observation flow
+
+```text
+Android notification
+  → NotificationListenerService callback
+  → allow-listed metadata extraction (no title/body)
+  → process-local EventChannel
+  → AndroidPlatformAdapter parsing
+  → Riverpod observation provider
+  → NotificationObservationService (execute nothing)
+  → Home displays sanitized event / matched rule
+```
+
+The app evaluates posted events against enabled rules but never calls
+`RuleEnforcementService` or `submitEnforcementRequest`. Enforcement stays
+reported as unsupported.
 
 ## Testing strategy
 
@@ -122,6 +174,15 @@ manifest declares no special or runtime permissions.
   for persistence.
 - Widget tests override the repository and platform adapter so the app can launch
   in the test environment.
+- Platform tests mock the MethodChannel and both EventChannels, including
+  malformed payloads, safe stream errors, concurrent listeners, cancellation,
+  re-subscription, and fresh status queries after connection changes.
+- Lifecycle widget tests simulate app pause/resume and native connection changes;
+  they verify the UI updates only after the refreshed status resolves.
+- Kotlin unit tests cover event sanitization, notification-access component
+  matching, status idempotence, and sink teardown. Android instrumentation tests
+  run the access comparison against the real system setting and the payload
+  allowlist on-device; manual grant/revoke and service rebinding remain required.
 - On Windows, tests load `winsqlite3.dll`; Android uses `sqlite3_flutter_libs`.
 
 ## iOS boundary

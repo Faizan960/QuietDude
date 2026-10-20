@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../core/utilities/date_time_formatter.dart';
+import '../../domain/models/notification_listener.dart';
+import '../../domain/models/notification_observation.dart';
 import '../../domain/models/privacy_rule.dart';
 import '../permissions/widgets/capability_status_list.dart';
+import '../permissions/widgets/notification_access_card.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -44,6 +48,10 @@ class HomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           const _EnforcementNotice(),
+          const SizedBox(height: 16),
+          const NotificationAccessCard(),
+          const SizedBox(height: 16),
+          const _LastObservationCard(),
           const SizedBox(height: 16),
           _RulesOverview(rules: rules),
           const SizedBox(height: 16),
@@ -85,8 +93,9 @@ class _EnforcementNotice extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Quietdude currently stores rules only. It does not read, '
-                    'hide, silence, or dismiss notifications on this device.',
+                    'Quietdude can observe sanitized notification metadata and '
+                    'evaluate rules against it. It does not hide, silence, '
+                    'dismiss, or rewrite notifications on this device.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -97,6 +106,103 @@ class _EnforcementNotice extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _LastObservationCard extends ConsumerWidget {
+  const _LastObservationCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final observation = ref.watch(lastNotificationObservationProvider);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Last observed event', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            observation.when(
+              loading: () => Text(
+                'Waiting for a notification event. No title or body is read.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              error: (error, stackTrace) => Text(
+                'Notification event stream is unavailable.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+              data: (latest) => _ObservationDetails(observation: latest),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ObservationDetails extends StatelessWidget {
+  const _ObservationDetails({required this.observation});
+
+  final NotificationObservation observation;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final event = observation.event;
+    final eventLabel = event.type == NotificationEventType.posted
+        ? 'Posted'
+        : 'Removed';
+    final plan = observation.plan;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$eventLabel by ${event.packageName}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          formatRuleTimestamp(event.postedAt),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (event.hasText) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Notification text was present. Its content was not read or stored.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (observation.evaluated) ...[
+          const SizedBox(height: 6),
+          if (plan != null && !plan.isEmpty)
+            Text(
+              'Rule matched: ${plan.rule!.name}. Enforcement is not implemented.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            Text(
+              'No enabled rule matched this event.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+        ],
+      ],
     );
   }
 }

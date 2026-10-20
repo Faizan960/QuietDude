@@ -132,6 +132,91 @@ void main() {
       );
     });
 
+    test('time window starts inclusively and ends exclusively', () {
+      final condition = TimeWindowCondition(
+        window: TimeWindow(startMinute: 9 * 60, endMinute: 17 * 60),
+      );
+
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 8, 59))),
+        isFalse,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 9))),
+        isTrue,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 16, 59))),
+        isTrue,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 17))),
+        isFalse,
+      );
+    });
+
+    test('cross-midnight boundaries are start-inclusive and end-exclusive', () {
+      final condition = TimeWindowCondition(
+        window: TimeWindow(startMinute: 22 * 60, endMinute: 6 * 60),
+      );
+
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 21, 59))),
+        isFalse,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 22))),
+        isTrue,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 2, 5, 59))),
+        isTrue,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 2, 6))),
+        isFalse,
+      );
+    });
+
+    test('equal endpoints retain all-day compatibility semantics', () {
+      final condition = TimeWindowCondition(
+        window: TimeWindow(startMinute: 0, endMinute: 0),
+      );
+
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1))),
+        isTrue,
+      );
+      expect(
+        condition.matches(RuleContext(now: DateTime.utc(2026, 1, 1, 23, 59))),
+        isTrue,
+      );
+    });
+
+    test('time window uses the supplied local wall-clock fields', () {
+      final condition = TimeWindowCondition(
+        window: TimeWindow(startMinute: 9 * 60, endMinute: 17 * 60),
+      );
+      final local = DateTime(2026, 3, 8, 9, 15);
+
+      expect(condition.matches(RuleContext(now: local)), isTrue);
+    });
+
+    test('time window rejects out-of-range or incomplete bounds', () {
+      expect(
+        () => TimeWindow(startMinute: -1, endMinute: 60),
+        throwsArgumentError,
+      );
+      expect(
+        () => TimeWindow(startMinute: 0, endMinute: 1440),
+        throwsArgumentError,
+      );
+      expect(
+        () => TimeWindow(startMinute: 1440, endMinute: 0),
+        throwsArgumentError,
+      );
+    });
+
     test('app condition compares the foreground package', () {
       final condition = AppCondition(packageName: 'com.example.chat');
 

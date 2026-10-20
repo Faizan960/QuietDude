@@ -21,18 +21,39 @@ Storage location: the application support directory resolved by
 Users can delete rules from the Rules screen. Uninstalling the app removes the
 local database.
 
-## Notification content
+## Notification observation
 
-- This scaffold does not read notifications. No notification title, body,
-  sender, conversation, or attachment data is processed.
-- Future notification-listener work must keep notification text in memory only
-  for the shortest time required to evaluate a rule.
-- Notification bodies, message text, contact messages, and attachments must not
-  be written to SQLite, logs, files, diagnostics, or any network destination.
-- If keyword filtering is added, keyword definitions may be stored as rule
-  configuration, but matched notification content must not be persisted.
-- Quietdude cannot promise that notifications are blocked before they appear.
-  Android and iOS impose limits, and any UI must say what actually happened.
+Quietdude can observe notifications only after the user grants Android's
+notification-listener special access. Observation is in-memory and limited to
+allow-listed metadata:
+
+- Event type (`posted` or `removed`).
+- Posting package name.
+- A process-salted, truncated hash of the notification key.
+- Notification category, when present (at most 64 characters).
+- Posting timestamp.
+- Whether title/text/big-text/sub-text keys were present (`hasText`).
+- Whether the notification is a group summary.
+
+Title, body, text, sender, people, conversation/group identifiers, raw keys,
+bitmaps, and raw extras are not copied into the event model. `hasText` checks for
+key presence; it does not read the text value.
+
+Events and connection changes are delivered only while Flutter is listening.
+They are not queued to disk, inserted into Drift, logged, or sent over the
+network. Connection-status payloads contain only `connected` or `disconnected`.
+The Home screen may display the latest package/type/time and rule match until the
+app process is replaced or another event arrives. The raw notification object is
+not retained. A process restart resets the in-memory latest event; no event is
+replayed from a queue or database.
+
+Keyword matching, preview rewriting, dismissal, and interruption-filter changes
+are deferred. If transient text processing is added later, it must remain in
+memory for the shortest practical duration, must never be logged or persisted,
+and must never appear in error messages or crash reports.
+
+Quietdude cannot promise that notifications are blocked before they appear.
+Android and iOS impose limits, and the UI must say what actually happened.
 
 ## Data explicitly excluded
 
@@ -48,24 +69,28 @@ local database.
 
 ## Permissions
 
-See [permissions.md](permissions.md). The app currently requests no permissions.
-Sensitive access is added only when the corresponding feature is implemented, is
-explained before the system flow, and can be revoked by the user.
+See [permissions.md](permissions.md). The app requests no permissions at launch.
+Notification-listener access is special access that the user grants in system
+settings after an in-app explanation. It can be revoked at any time; the app
+remains usable when denied.
 
 ## Logging
 
 `DiagnosticLogger` emits structured events under the `quietdude.*` logger scope.
-Logs may include non-content metadata such as a rule id or operation name. They
-must not include notification text, contact names, phone numbers, exact
-locations, message content, or raw platform payloads. Repository warnings use
-rule ids only. The platform adapter logs the failed operation, not the payload.
+Logs may include non-content metadata such as a rule id, operation name, or a
+malformed-event marker. They must not include notification text, package history,
+contact names, phone numbers, exact locations, message content, or raw platform
+payloads. Repository warnings use rule ids only. The platform adapter logs the
+failed operation, not the payload, and maps notification-stream errors to a
+content-free typed exception. The Kotlin listener writes no notification content
+to Logcat.
 
 ## Network
 
-The scaffold has no network dependency, permission, or endpoint. If a future
-feature needs network access, it requires an explicit privacy review, a clear
-opt-in, and documentation of what leaves the device. Notification content must
-remain excluded by default.
+The main app manifest has no network permission or endpoint; the debug manifest
+adds `INTERNET` only for Flutter tooling. If a future feature needs network
+access, it requires an explicit privacy review, a clear opt-in, and documentation
+of what leaves the device. Notification content must remain excluded by default.
 
 ## Threat model and limits
 

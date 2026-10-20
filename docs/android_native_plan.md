@@ -1,45 +1,62 @@
 # Android native integration plan
 
-This document records the intended Android implementation path. Only the
-capability bridge exists today; no enforcement service is registered.
+This document records the Android implementation path. Notification observation
+is implemented; enforcement is not.
 
-## Current scaffold
+## Implemented listener foundation
 
 - `MainActivity` is a Flutter activity written in Kotlin.
 - `PlatformBridge` registers the method channel
-  `com.example.notification_privacy/platform`.
-- Supported methods: `getCapabilities`, `checkPermission`, `openSettings`, and
-  `submitEnforcementRequest`.
-- `submitEnforcementRequest` returns `unsupported`. No state is changed.
-- The manifest declares no permissions and no services.
-- The app does not request access at startup. `openSettings` is invoked only by an
-  explicit future user action.
+  `com.example.notification_privacy/platform`, the notification-event channel
+  `com.example.notification_privacy/platform_events`, and the connection-status
+  channel `com.example.notification_privacy/listener_status_events`.
+- Methods: `getCapabilities`, `checkPermission`,
+  `getNotificationListenerStatus`, `openNotificationListenerSettings`,
+  `openSettings`, and `submitEnforcementRequest`.
+- `submitEnforcementRequest` still returns `unsupported`. No state is changed.
+- `QuietdudeNotificationListenerService` handles posted/removed events and
+  connection changes.
+- The manifest has one service declaration protected by
+  `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE`; it adds no
+  `<uses-permission>` entries.
+- The app does not request access at startup. Settings are opened only from an
+  explicit user action.
 
 ## Notification access
 
-Planned shape:
+Implemented:
 
-1. Add `QuietdudeNotificationListener : NotificationListenerService`.
-2. Declare it in the manifest with
-   `android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"`
-   and the `android.service.notification.NotificationListenerService` intent
-   filter. Do not export it.
-3. Check access through `Settings.Secure.enabled_notification_listeners` or by
-   binding, and report `permission_required` when absent.
-4. Open `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS` only after an in-app
-   explanation.
-5. Process `StatusBarNotification` metadata in memory. Never persist title, text,
-   sender, or conversation content.
-6. For preview redaction, use supported notification update paths. Do not claim
-   that a notification can always be prevented from appearing.
-7. Report per-action outcomes: applied, partially applied, unsupported,
-   permission required, failed, or not applicable.
+1. `QuietdudeNotificationListenerService : NotificationListenerService`.
+2. Manifest binding permission and listener intent filter; exported so the
+   system can bind it, protected by the signature permission.
+3. Access check by parsing `Settings.Secure.enabled_notification_listeners` and
+   matching the app package plus exact service class.
+4. Typed status: `granted`, `not_granted`, `unsupported`, `error`, plus
+   `connected`/`disconnected`/`unavailable` connection state.
+5. `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS` opened only after an in-app
+   explanation. Resume triggers a recheck.
+6. Allow-listed metadata only: type, package, salted event-id hash, category,
+   timestamp, `hasText`, and `isGroupSummary`. No title, body, sender, people, or
+   conversation data.
+7. In-memory event delivery through EventChannel. Events are never persisted or
+   logged.
+8. Domain evaluation of posted events without submitting enforcement.
+
+Deferred:
+
+1. Preview redaction or blocking.
+2. Dismissal.
+3. Interruption-filter changes.
+4. Keyword/text matching.
+5. Per-action outcome reporting once an action exists.
 
 Constraints:
 
 - Notification access is broad special access and can be revoked.
 - Group summaries, foreground services, media notifications, and OEM behavior
   vary.
+- `hasText` is key presence, not a guarantee of readable content.
+- Notification categories are app-defined and bounded before forwarding.
 - Dismissal uses notification keys and may fail for protected or already
   dismissed notifications.
 - Do not add an AccessibilityService for notification interception.
@@ -119,8 +136,18 @@ display the reported status rather than assuming a match equals success.
 
 ## Testing
 
-- Add instrumentation or Robolectric tests where they can validate Android
-  behavior without a device.
-- Manual test matrix must include permission granted/denied/revoked, notification
-  group summaries, OEM-specific DND behavior, reboot, and process death.
+- Kotlin JVM tests cover notification-access component parsing and event
+  sanitization, including missing fields, content-free payload keys, hashed event
+  IDs, posted/removed classification, status idempotence, and sink teardown.
+- Flutter tests cover typed status/event parsing, connection changes, malformed
+  payloads, safe stream errors, cancellation, re-subscription, fresh status
+  refreshes, missing plugins, lifecycle refresh, and UI states.
+- Android instrumentation tests compare access evaluation with the real
+  `Settings.Secure` value and verify the payload allowlist on a connected
+  device/emulator. Run `:app:connectedDebugAndroidTest` and record the API level.
+- Real `StatusBarNotification`, service binding, permission grant/revoke, and
+  Android rebinding require a device/emulator and are verified manually.
+- Manual test matrix must include permission granted/denied/revoked/regranted,
+  posted and removed events, background/foreground, process death, reboot,
+  notification group summaries, and logcat content checks.
 - Never mark a capability implemented solely because a method call returned.

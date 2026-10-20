@@ -75,6 +75,7 @@ class _CapabilityRow extends StatelessWidget {
       CapabilityStatus.partiallySupported => Icons.contrast,
       CapabilityStatus.requiresPermission => Icons.lock_outline,
       CapabilityStatus.scaffolded => Icons.construction_outlined,
+      CapabilityStatus.unavailable => Icons.link_off,
       CapabilityStatus.planned => Icons.schedule_outlined,
       CapabilityStatus.unsupported => Icons.block_outlined,
     };
@@ -105,6 +106,10 @@ class CapabilityStatusChip extends StatelessWidget {
       CapabilityStatus.scaffolded => (
         scheme.surfaceContainerHighest,
         scheme.onSurfaceVariant,
+      ),
+      CapabilityStatus.unavailable => (
+        scheme.secondaryContainer,
+        scheme.onSecondaryContainer,
       ),
       CapabilityStatus.planned => (
         scheme.surfaceContainerHighest,

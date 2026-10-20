@@ -59,6 +59,29 @@ void main() {
       expect(first.resolution.winningRule?.id, 'b');
     });
 
+    test('notification source package takes precedence for app conditions', () {
+      final sourceRule = buildRule(
+        id: 'source',
+        conditions: [AppCondition(packageName: 'com.example.mail')],
+      );
+      final foregroundRule = buildRule(
+        id: 'foreground',
+        conditions: [AppCondition(packageName: 'com.example.chat')],
+      );
+      final notificationContext = RuleContext(
+        now: context.now,
+        foregroundAppPackage: 'com.example.chat',
+        notificationSourcePackage: 'com.example.mail',
+      );
+
+      final evaluation = engine.evaluate(
+        rules: [sourceRule, foregroundRule],
+        context: notificationContext,
+      );
+
+      expect(evaluation.matchedRules.map((rule) => rule.id), ['source']);
+    });
+
     test('ignores disabled rules', () {
       final evaluation = engine.evaluate(
         rules: [

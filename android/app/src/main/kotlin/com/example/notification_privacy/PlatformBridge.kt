@@ -2,18 +2,20 @@ package com.example.notification_privacy
 
 import android.app.Activity
 import android.app.NotificationManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Minimal, read-only bridge used to prove Flutter <-> Kotlin communication.
+ * Read-only capability and notification-observation bridge.
  *
- * Enforcement is deliberately unimplemented. Capability responses must never
- * imply that Quietdude can already suppress or rewrite notifications.
+ * Enforcement is deliberately unimplemented. Responses must never imply that
+ * Quietdude can suppress, dismiss, or rewrite notifications.
  */
 class PlatformBridge(
     private val activity: Activity,
@@ -21,10 +23,41 @@ class PlatformBridge(
 
     companion object {
         const val CHANNEL = "com.example.notification_privacy/platform"
+        const val EVENT_CHANNEL = "com.example.notification_privacy/platform_events"
+        const val STATUS_EVENT_CHANNEL =
+            "com.example.notification_privacy/listener_status_events"
 
         fun register(engine: FlutterEngine, activity: Activity) {
             MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
                 .setMethodCallHandler(PlatformBridge(activity))
+            EventChannel(engine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
+                .setStreamHandler(
+                    object : EventChannel.StreamHandler {
+                        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                            if (events != null) {
+                                NotificationListenerEventBus.attach(events)
+                            }
+                        }
+
+                        override fun onCancel(arguments: Any?) {
+                            NotificationListenerEventBus.detachCurrent()
+                        }
+                    },
+                )
+            EventChannel(engine.dartExecutor.binaryMessenger, STATUS_EVENT_CHANNEL)
+                .setStreamHandler(
+                    object : EventChannel.StreamHandler {
+                        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                            if (events != null) {
+                                NotificationListenerEventBus.attachStatus(events)
+                            }
+                        }
+
+                        override fun onCancel(arguments: Any?) {
+                            NotificationListenerEventBus.detachCurrentStatus()
+                        }
+                    },
+                )
         }
     }
 
@@ -35,6 +68,9 @@ class PlatformBridge(
                 val permission = call.argument<String>("permission")
                 result.success(checkPermission(permission))
             }
+            "getNotificationListenerStatus" -> result.success(listenerStatus())
+            "openNotificationListenerSettings" ->
+                result.success(openNotificationListenerSettings())
             "openSettings" -> {
                 val permission = call.argument<String>("permission")
                 result.success(openSettings(permission))
@@ -50,16 +86,31 @@ class PlatformBridge(
     }
 
     private fun capabilities(): List<Map<String, Any?>> {
-        val listenerGranted = isNotificationListenerGranted()
+        val (listenerAccess, listenerConnected) = listenerSnapshot()
         val dndGranted = isDoNotDisturbAccessGranted()
         return listOf(
             capability(
                 id = "notification_listener",
-                status = if (listenerGranted) "scaffolded" else "requires_permission",
-                detail = if (listenerGranted) {
-                    "Notification access is granted, but the listener service is not implemented yet."
-                } else {
-                    "Notification access has not been granted. No notification content is read."
+                status = when {
+                    listenerAccess == "granted" && listenerConnected -> "implemented"
+                    listenerAccess == "granted" -> "unavailable"
+                    listenerAccess == "not_granted" -> "requires_permission"
+                    listenerAccess == "unsupported" -> "unsupported"
+                    else -> "unavailable"
+                },
+                detail = when {
+                    listenerAccess == "granted" && listenerConnected ->
+                        "Notification listener connected. Sanitized metadata observation only; " +
+                            "notification enforcement is not implemented."
+                    listenerAccess == "granted" ->
+                        "Notification access is granted, but the listener is not connected. " +
+                            "Android may reconnect it when needed."
+                    listenerAccess == "not_granted" ->
+                        "Notification access has not been granted. No notification content is read."
+                    listenerAccess == "unsupported" ->
+                        "Notification listener access is not available on this device."
+                    else ->
+                        "Notification access status could not be determined."
                 },
             ),
             capability(
@@ -80,7 +131,7 @@ class PlatformBridge(
             capability(
                 id = "keyword_filtering",
                 status = "scaffolded",
-                detail = "Only possible where the operating system exposes notification text.",
+                detail = "Only metadata observation is implemented; text filtering is not.",
             ),
             capability(
                 id = "discreet_alerts",
@@ -106,24 +157,69 @@ class PlatformBridge(
         "detail" to detail,
     )
 
-    private fun isNotificationListenerGranted(): Boolean {
-        val enabled = Settings.Secure.getString(
-            activity.contentResolver,
-            "enabled_notification_listeners",
-        ) ?: return false
-        return enabled.split(":").any { component ->
-            component.startsWith(activity.packageName)
+    private fun listenerStatus(): Map<String, Any?> {
+        val (access, connected) = listenerSnapshot()
+        val connection = when {
+            access != "granted" -> "unavailable"
+            connected -> "connected"
+            else -> "disconnected"
+        }
+        return mapOf(
+            "access" to access,
+            "connection" to connection,
+        )
+    }
+
+    /**
+     * A bound listener is proof that access is granted. During a live regrant,
+     * the settings provider can briefly lag behind the service binding, so the
+     * connection state wins until the next explicit query.
+     */
+    private fun listenerSnapshot(): Pair<String, Boolean> {
+        val connected = NotificationListenerEventBus.isConnected
+        val access = if (connected) "granted" else notificationAccessState()
+        return access to connected
+    }
+
+    private fun notificationAccessState(): String {
+        return try {
+            val enabled = Settings.Secure.getString(
+                activity.contentResolver,
+                "enabled_notification_listeners",
+            )
+            if (
+                NotificationAccessEvaluator.isEnabled(
+                    enabledListeners = enabled,
+                    applicationPackage = activity.packageName,
+                    serviceClassName = QuietdudeNotificationListenerService::class.java.name,
+                )
+            ) {
+                "granted"
+            } else {
+                "not_granted"
+            }
+        } catch (_: Exception) {
+            "error"
         }
     }
 
     private fun isDoNotDisturbAccessGranted(): Boolean {
-        val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        return manager.isNotificationPolicyAccessGranted
+        return try {
+            val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.isNotificationPolicyAccessGranted
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun checkPermission(permission: String?): Map<String, Any?> = when (permission) {
         "notification_listener" -> mapOf(
-            "state" to if (isNotificationListenerGranted()) "granted" else "denied",
+            "state" to when (listenerSnapshot().first) {
+                "granted" -> "granted"
+                "not_granted" -> "denied"
+                "unsupported" -> "not_applicable"
+                else -> "unknown"
+            },
         )
         "do_not_disturb_access" -> mapOf(
             "state" to if (isDoNotDisturbAccessGranted()) "granted" else "denied",
@@ -132,15 +228,26 @@ class PlatformBridge(
         else -> mapOf("state" to "unknown")
     }
 
-    private fun openSettings(permission: String?): Boolean {
-        val intent = when (permission) {
-            "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            "do_not_disturb_access" -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-            else -> return false
-        }
+    private fun openSettings(permission: String?): Boolean = when (permission) {
+        "notification_listener" -> openNotificationListenerSettings()
+        "do_not_disturb_access" -> openSystemSettings(
+            Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS),
+        )
+        else -> false
+    }
+
+    private fun openNotificationListenerSettings(): Boolean {
+        return openSystemSettings(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    private fun openSystemSettings(intent: Intent): Boolean {
         return try {
             activity.startActivity(intent)
             true
+        } catch (_: ActivityNotFoundException) {
+            false
+        } catch (_: SecurityException) {
+            false
         } catch (_: Exception) {
             false
         }

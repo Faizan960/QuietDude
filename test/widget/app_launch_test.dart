@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quietdude/app/app.dart';
 import 'package:quietdude/app/providers.dart';
+import 'package:quietdude/domain/models/notification_listener.dart';
 
 import '../fixtures/fake_platform_adapter.dart';
 import '../fixtures/fake_rule_repository.dart';
@@ -11,13 +14,16 @@ import '../fixtures/rule_fixtures.dart';
 void main() {
   Future<void> pumpApp(
     WidgetTester tester,
-    FakeRuleRepository repository,
-  ) async {
+    FakeRuleRepository repository, {
+    FakePlatformAdapter? adapter,
+  }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           ruleRepositoryProvider.overrideWithValue(repository),
-          platformAdapterProvider.overrideWithValue(FakePlatformAdapter()),
+          platformAdapterProvider.overrideWithValue(
+            adapter ?? FakePlatformAdapter(),
+          ),
         ],
         child: const QuietdudeApp(),
       ),
@@ -34,6 +40,12 @@ void main() {
     expect(find.text('Quietdude'), findsOneWidget);
     expect(find.text('Your notifications. Your rules.'), findsOneWidget);
     expect(find.text('Enforcement is not implemented yet'), findsOneWidget);
+    expect(find.text('Access not granted'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('1 rule · 1 enabled'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('1 rule · 1 enabled'), findsOneWidget);
     expect(find.text('Work focus'), findsOneWidget);
     await tester.scrollUntilVisible(
@@ -72,5 +84,89 @@ void main() {
     expect(find.text('Focus mode'), findsOneWidget);
     expect(find.text('No rules yet'), findsNothing);
     expect(await repository.getRules(), hasLength(1));
+  });
+
+  testWidgets('refreshes listener access when the app resumes', (tester) async {
+    final repository = FakeRuleRepository();
+    addTearDown(repository.dispose);
+    final adapter = FakePlatformAdapter();
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    await pumpApp(tester, repository, adapter: adapter);
+    expect(find.text('Access not granted'), findsOneWidget);
+    final initialRequests = adapter.listenerStatusRequests;
+
+    adapter.listenerStatus = const NotificationListenerStatus(
+      access: NotificationAccessStatus.granted,
+      connection: NotificationConnectionStatus.connected,
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(adapter.listenerStatusRequests, greaterThan(initialRequests));
+    expect(find.text('Access granted'), findsOneWidget);
+    expect(find.text('Listener connected'), findsOneWidget);
+  });
+
+  testWidgets('refreshes listener access on native connection changes', (
+    tester,
+  ) async {
+    final repository = FakeRuleRepository();
+    addTearDown(repository.dispose);
+    final connectionEvents =
+        StreamController<NotificationConnectionStatus>.broadcast();
+    addTearDown(connectionEvents.close);
+    final adapter = FakePlatformAdapter(
+      connectionEvents: connectionEvents.stream,
+    );
+
+    await pumpApp(tester, repository, adapter: adapter);
+    expect(find.text('Access not granted'), findsOneWidget);
+
+    adapter.listenerStatus = const NotificationListenerStatus(
+      access: NotificationAccessStatus.granted,
+      connection: NotificationConnectionStatus.connected,
+    );
+    connectionEvents.add(NotificationConnectionStatus.connected);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Access granted'), findsOneWidget);
+    expect(find.text('Listener connected'), findsOneWidget);
+  });
+
+  testWidgets('reconciles a lagging access read after a connection change', (
+    tester,
+  ) async {
+    final repository = FakeRuleRepository();
+    addTearDown(repository.dispose);
+    final connectionEvents =
+        StreamController<NotificationConnectionStatus>.broadcast();
+    addTearDown(connectionEvents.close);
+    final adapter = FakePlatformAdapter(
+      connectionEvents: connectionEvents.stream,
+    );
+
+    await pumpApp(tester, repository, adapter: adapter);
+    expect(find.text('Access not granted'), findsOneWidget);
+
+    connectionEvents.add(NotificationConnectionStatus.connected);
+    await tester.pump();
+    await tester.pump();
+
+    adapter.listenerStatus = const NotificationListenerStatus(
+      access: NotificationAccessStatus.granted,
+      connection: NotificationConnectionStatus.connected,
+    );
+    await tester.pump(const Duration(milliseconds: 1300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Access granted'), findsOneWidget);
+    expect(find.text('Listener connected'), findsOneWidget);
   });
 }

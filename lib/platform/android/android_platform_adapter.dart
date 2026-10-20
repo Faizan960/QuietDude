@@ -1,4 +1,5 @@
 import '../../core/logging/diagnostic_logger.dart';
+import '../../domain/models/notification_listener.dart';
 import '../../domain/models/platform_capability.dart';
 import '../../domain/models/rule_execution.dart';
 import '../contracts/platform_adapter.dart';
@@ -13,6 +14,8 @@ class AndroidPlatformAdapter implements PlatformAdapter {
 
   final PlatformChannel _channel;
   final DiagnosticLogger _logger;
+  Stream<SanitizedNotificationEvent>? _notificationEventStream;
+  Stream<NotificationConnectionStatus>? _connectionStatusStream;
 
   @override
   Future<List<PlatformCapability>> getCapabilities() async {
@@ -63,6 +66,71 @@ class AndroidPlatformAdapter implements PlatformAdapter {
   }
 
   @override
+  Future<NotificationListenerStatus> getNotificationListenerStatus() async {
+    try {
+      final result = await _channel.invokeMethod(
+        'getNotificationListenerStatus',
+      );
+      if (result is! Map || result['access'] is! String) {
+        return const NotificationListenerStatus.error();
+      }
+      final connection = result['connection'];
+      return NotificationListenerStatus(
+        access: NotificationAccessStatus.fromWireName(
+          result['access'] as String,
+        ),
+        connection: connection is String
+            ? NotificationConnectionStatus.fromWireName(connection)
+            : NotificationConnectionStatus.unknown,
+      );
+    } on PlatformChannelException catch (error) {
+      _logger.warning('listener_status_failed', {'reason': error.operation});
+      return const NotificationListenerStatus.error();
+    }
+  }
+
+  @override
+  Future<bool> openNotificationListenerSettings() async {
+    try {
+      final result = await _channel.invokeMethod(
+        'openNotificationListenerSettings',
+      );
+      return result == true;
+    } on PlatformChannelException catch (error) {
+      _logger.warning('listener_settings_failed', {'reason': error.operation});
+      return false;
+    }
+  }
+
+  @override
+  Stream<SanitizedNotificationEvent> get notificationEvents {
+    return _notificationEventStream ??= _channel.events
+        .map(_parseNotificationEvent)
+        .where((event) {
+          if (event == null) {
+            _logger.warning('notification_event_malformed');
+          }
+          return event != null;
+        })
+        .cast<SanitizedNotificationEvent>()
+        .handleError((error, stackTrace) {
+          _logger.warning('notification_event_stream_failed');
+          throw const NotificationEventStreamException();
+        });
+  }
+
+  @override
+  Stream<NotificationConnectionStatus> get notificationConnectionEvents {
+    return _connectionStatusStream ??= _channel.listenerStatusEvents
+        .map(_parseConnectionStatus)
+        .where((status) => status != null)
+        .cast<NotificationConnectionStatus>()
+        .handleError((error, stackTrace) {
+          _logger.warning('listener_status_stream_failed');
+        });
+  }
+
+  @override
   Future<RuleExecutionResult> submitEnforcementRequest(
     EnforcementRequest request,
   ) async {
@@ -78,6 +146,60 @@ class AndroidPlatformAdapter implements PlatformAdapter {
     } on PlatformChannelException catch (error) {
       _logger.warning('enforcement_failed', {'reason': error.operation});
       return _failedResult(request, 'Native enforcement bridge unavailable.');
+    }
+  }
+
+  NotificationConnectionStatus? _parseConnectionStatus(Object? raw) {
+    if (raw is! Map || raw['connection'] is! String) {
+      return null;
+    }
+    final status = NotificationConnectionStatus.fromWireName(
+      raw['connection'] as String,
+    );
+    return status == NotificationConnectionStatus.unknown ? null : status;
+  }
+
+  SanitizedNotificationEvent? _parseNotificationEvent(Object? raw) {
+    if (raw is! Map) {
+      return null;
+    }
+
+    final type = raw['type'];
+    final packageName = raw['package'];
+    final eventId = raw['eventId'];
+    final postedAt = raw['postedAt'];
+    if (type is! String ||
+        packageName is! String ||
+        packageName.trim().isEmpty ||
+        eventId is! String ||
+        eventId.trim().isEmpty ||
+        postedAt is! num ||
+        postedAt <= 0) {
+      return null;
+    }
+
+    final eventType = NotificationEventType.fromWireName(type);
+    if (eventType == null) {
+      return null;
+    }
+
+    final category = raw['category'];
+    final milliseconds = postedAt.toInt();
+    try {
+      return SanitizedNotificationEvent(
+        type: eventType,
+        packageName: packageName,
+        eventId: eventId,
+        category: category is String && category.isNotEmpty ? category : null,
+        postedAt: DateTime.fromMillisecondsSinceEpoch(
+          milliseconds,
+          isUtc: true,
+        ),
+        hasText: raw['hasText'] == true,
+        isGroupSummary: raw['isGroupSummary'] == true,
+      );
+    } catch (_) {
+      return null;
     }
   }
 

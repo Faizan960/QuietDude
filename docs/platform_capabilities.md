@@ -18,7 +18,8 @@ Status values used by the app and documentation:
 | Local rule storage | Implemented | Implemented | Shared Drift schema, local only. |
 | Deterministic rule evaluation | Implemented | Implemented | Shared Dart engine and policy. |
 | Capability reporting | Implemented | Implemented | Android via Kotlin bridge; iOS static honest report. |
-| Notification listener access | Requires permission | Unsupported | Android special access; iOS exposes no cross-app notification API. |
+| Notification listener access | Implemented (observation) | Unsupported | Android special access; sanitized metadata only. iOS exposes no cross-app notification API. |
+| Notification enforcement | Unsupported | Unsupported | No preview blocking, silencing, or dismissal is implemented. |
 | Preview redaction | Scaffolded | Unsupported | Requires notification access on Android; not implemented. iOS can only alter Quietdude's own notifications via an extension. |
 | Do Not Disturb / interruption filter | Requires permission | Unsupported | Android policy access required; iOS Focus modes are not controllable. |
 | Notification dismissal | Requires permission | Unsupported | Android notification access plus version limits. |
@@ -34,22 +35,26 @@ These are the values returned by `PlatformBridge.getCapabilities()` today:
 
 | Capability id | Returned status | Reason |
 |---|---|---|
-| `notification_listener` | `requires_permission`, or `scaffolded` when access is granted | Access may be granted, but no listener service exists. |
+| `notification_listener` | `implemented` when access is granted and connected; `unavailable` when granted but disconnected; `requires_permission` when not granted | Observation only. The detail states that enforcement is not implemented. |
 | `preview_redaction` | `scaffolded` | No preview rewriting implemented. |
 | `do_not_disturb_control` | `requires_permission`, or `scaffolded` when policy access is granted | No interruption-filter changes implemented. |
 | `notification_dismissal` | `requires_permission` | No dismissal implemented. |
-| `keyword_filtering` | `scaffolded` | Text availability varies by Android version/app. |
+| `keyword_filtering` | `scaffolded` | Only metadata observation exists; text filtering is not implemented. |
 | `discreet_alerts` | `planned` | Not designed or implemented. |
 | `geofence_events` | `planned` | No location permission or geofencing code. |
 | `wearable_proximity` | `planned` | No BLE scanning code. |
 
 The Settings screen displays these values verbatim. It never shows an action as
-active just because a rule matched.
+active just because a rule matched. Home separately shows typed access and
+connection labels (`Access granted`, `Access not granted`, `Listener connected`,
+`Listener disconnected`, `Observation unavailable`) and an explicit
+`Enforcement is not implemented yet` notice.
 
 ## Android versus iOS
 
 - Android can expose notification metadata through a user-granted
-  `NotificationListenerService`. Quietdude does not implement it yet.
+  `NotificationListenerService`. Quietdude implements observation of sanitized
+  metadata only; it does not modify notifications.
 - Android interruption filters need `NotificationManager` policy access, which
   opens a system settings flow. Apps must not silently toggle it.
 - Android notification dismissal is constrained by listener access, key lifetime,

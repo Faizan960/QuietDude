@@ -1,8 +1,8 @@
 # Permissions and special access
 
-Quietdude requests **no permissions at launch**. The scaffold only reads whether
+Quietdude requests **no permissions at launch**. It only reads whether
 notification access and Do Not Disturb policy access are already granted. It
-never opens a permission prompt automatically.
+never opens a permission prompt or system settings screen automatically.
 
 Sensitive access must be explained in context before the system flow is opened,
 and the user must take the final action.
@@ -11,35 +11,48 @@ and the user must take the final action.
 
 | Access | Requested now? | Implemented now? | User-visible action now? |
 |---|---|---|---|
-| Notification listener access | No | No | No |
+| Notification listener access | User-initiated only | Yes, observation | Yes, opens system settings |
 | Do Not Disturb access | No | No | No |
 | Notifications (`POST_NOTIFICATIONS`) | No | No | No |
 | Location | No | No | No |
 | Bluetooth | No | No | No |
 | Contacts | No | No | No |
-| Internet | No | No | No |
+| Internet | No (debug tooling only) | No | No |
 
 `flutter_blue_plus` is installed but unused, and its Android manifest declares no
-Bluetooth permissions. The app manifest currently declares no permissions.
+Bluetooth permissions. The main manifest declares no `<uses-permission>` entries.
+The listener service is protected by the system's signature-level binding
+permission.
 
-## Planned accesses
+## Android accesses
 
 ### Notification listener access (Android)
 
-- **Why:** Read notification metadata (and, where exposed, text) to apply
-  redaction, silence, dismissal, or keyword rules.
-- **When:** Only when the user enables a rule that needs notification access.
-- **Manifest additions (future):**
-  - `<service android:name=".QuietdudeNotificationListener" android:exported="false" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">`
-  - `<intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>`
-  - `<uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />`
-    is not a normal permission; the service declaration uses the system binding
-    permission. Notification access is granted as special access.
+- **Why:** Observe sanitized notification lifecycle metadata and evaluate rules.
+  It is not needed to store or edit rules.
+- **When:** Only when the user explicitly opens notification access settings
+  from the app. Nothing is requested at launch.
+- **Manifest declaration:**
+  - `.QuietdudeNotificationListenerService`, `android:exported="true"`, with
+    `android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"`.
+  - Intent filter for
+    `android.service.notification.NotificationListenerService`.
+  - No `<uses-permission>` entry: this is special access, not a runtime
+    permission. The system binds the service.
 - **User action:** Open `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS` and
   enable Quietdude. Access can be revoked at any time.
-- **Caveat:** Access is broad. Quietdude must not log or persist notification
-  bodies or contact details. Some apps cannot be intercepted, and content may be
-  missing or encrypted.
+- **Status handling:** Components are matched by package and exact service class.
+  Opening settings never changes local state automatically. Status refreshes on
+  app resume, after explicit refresh, and when the native listener reports a
+  connection transition on its separate status stream. Revocation is therefore
+  reflected without retaining a stale connected state.
+- **Caveat:** Access is broad. Quietdude only sends allow-listed metadata to
+  Flutter and never logs or persists notification content. Some apps cannot be
+  observed, and content/metadata may be missing or vendor-specific.
+
+### Planned accesses
+
+The sections below describe future work and are not implemented.
 
 ### Do Not Disturb / interruption filter access (Android)
 

@@ -1,4 +1,5 @@
 import '../../domain/actions/rule_action.dart';
+import '../../domain/models/notification_listener.dart';
 import '../../domain/models/platform_capability.dart';
 import '../../domain/models/rule_execution.dart';
 import '../contracts/platform_adapter.dart';
@@ -67,6 +68,26 @@ class IosPlatformAdapter implements PlatformAdapter {
   @override
   Future<bool> requestSettingsAccess(PlatformPermission permission) async {
     return false;
+  }
+
+  @override
+  Future<NotificationListenerStatus> getNotificationListenerStatus() async {
+    return const NotificationListenerStatus.unsupported();
+  }
+
+  @override
+  Future<bool> openNotificationListenerSettings() async {
+    return false;
+  }
+
+  @override
+  Stream<SanitizedNotificationEvent> get notificationEvents {
+    return const Stream<SanitizedNotificationEvent>.empty();
+  }
+
+  @override
+  Stream<NotificationConnectionStatus> get notificationConnectionEvents {
+    return const Stream<NotificationConnectionStatus>.empty();
   }
 
   @override

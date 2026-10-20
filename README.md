@@ -3,32 +3,37 @@
 **Your notifications. Your rules.**
 
 Quietdude is a privacy-first Android application for defining independent rules
-that describe how notifications should behave in different situations. This
-repository currently contains the scaffold: local rule storage, a deterministic
-rule engine, a typed platform boundary, a minimal Kotlin capability bridge, and
-the initial Flutter UI.
+that describe how notifications should behave in different situations. It
+contains local rule storage, a deterministic rule engine, a typed platform
+boundary, a Kotlin notification-observation service, and the Flutter UI.
 
-Real notification enforcement is **not implemented** in this phase. Quietdude
-does not read, hide, silence, dismiss, or rewrite notifications yet.
+Notification **observation** is implemented behind Android's special
+notification-listener access. Notification **enforcement** is not: Quietdude
+does not hide, silence, dismiss, or rewrite notifications yet.
 
 ## What is implemented
 
 - Material 3 Flutter application with Home, Rules, and Settings screens.
 - Riverpod state wiring and `go_router` navigation.
 - Typed domain models for rules, conditions, actions, priorities, execution
-  results, and platform capabilities.
+  results, listener state, sanitized notification events, and capabilities.
 - Deterministic rule evaluation with documented conflict resolution.
 - Local SQLite persistence through Drift, behind a `RuleRepository` abstraction.
 - Typed platform adapter contract with Android and iOS implementations.
-- Minimal Kotlin `MethodChannel` bridge that reports capabilities and opens
-  supported settings screens when the user asks.
-- Unit, repository/persistence, and widget tests with fake platform adapters.
+- Android `NotificationListenerService` that reports connection state and emits
+  allow-listed notification metadata through a typed `EventChannel`.
+- Separate typed connection-status stream refreshed on native listener
+  transitions, with no polling.
+- Notification-access status, explanation, and settings flow. Status refreshes
+  when the app resumes, on explicit refresh, and on connection changes.
+- Observation-only rule evaluation in memory, without submitting enforcement.
+- Unit, repository/persistence, widget, and Kotlin unit tests.
 
 ## What is deliberately not implemented
 
-- `NotificationListenerService` or any notification interception.
+- Automatic notification dismissal, preview blocking, or silence.
 - Do Not Disturb / interruption-filter changes.
-- Notification dismissal.
+- Keyword matching against notification text.
 - Geofencing or location collection.
 - BLE wearable-proximity detection.
 - Backend, accounts, analytics, advertising, or cloud sync.
@@ -70,7 +75,9 @@ flutter run -d <device-id>
 ```
 
 The application launches without requesting notification access, location,
-Bluetooth, or any other special permission. Capability reporting is read-only.
+Bluetooth, or any other special permission. Notification access is opened only
+from the explicit Settings/Home action and is granted by the user in Android's
+system UI. Capability reporting remains read-only.
 
 ## Test and verify
 
@@ -79,7 +86,14 @@ dart format .
 dart analyze
 flutter test
 flutter build apk --debug
+cd android
+.\gradlew.bat :app:testDebugUnitTest
+.\gradlew.bat :app:connectedDebugAndroidTest
 ```
+
+Android instrumentation tests require a connected emulator/device and the
+Android test runner. They do not grant notification-listener access; the
+system-settings grant/revoke flow remains a manual test.
 
 The persistence tests use an in-memory SQLite database. On Windows, the Dart VM
 does not bundle SQLite, so `test/fixtures/sqlite_test_setup.dart` loads the
@@ -134,6 +148,7 @@ Domain code has no Flutter widget or Android implementation dependency. See
 - [Platform capabilities](docs/platform_capabilities.md)
 - [Permissions](docs/permissions.md)
 - [Privacy model](docs/privacy_model.md)
+- [Notification listener](docs/notification_listener.md)
 - [Android native integration plan](docs/android_native_plan.md)
 
 ## Known limitations
@@ -141,10 +156,19 @@ Domain code has no Flutter widget or Android implementation dependency. See
 - Rules created in the UI support name, enabled state, and priority. New rules
   receive a default always-match condition and hide-previews action; condition
   and action editing is a later milestone.
-- The rule engine and platform adapter are wired for tests, but the app does not
-  automatically submit enforcement requests yet.
+- Notification observation and rule evaluation are wired, but the app does not
+  submit enforcement requests or modify system notification state.
 - Android notification access and Do Not Disturb policy access are special
   user-granted access. They may be revoked at any time and vary by OEM/version.
+- Notification extras are app-controlled. Quietdude only checks whether text
+  keys are present; keyword matching and text processing are deferred.
+- Kotlin JVM tests cover sanitizer, access-component mapping, and the status bus;
+  Android instrumentation tests cover the allowlist and real access-setting
+  comparison. Real `StatusBarNotification` parsing, system-settings authorization,
+  service binding, reboots, and OEM behavior remain manual tests.
+- Notification timestamps are local wall-clock for rule evaluation. Named IANA
+  time zones and simulated DST transitions are not modelled without a timezone
+  package.
 - iOS cannot inspect another app's notifications. Future iOS work must report
   partial or unsupported capabilities honestly and can only alter Quietdude's
   own notifications.
@@ -152,14 +176,14 @@ Domain code has no Flutter widget or Android implementation dependency. See
 
 ## Next milestone
 
-Prove notification access and supported system-interruption controls on a
-physical Android device:
+Implement the first enforcement action on top of the observation boundary:
 
-1. Add a minimal `NotificationListenerService` behind explicit user consent.
-2. Report granted access accurately and handle revocation.
-3. Redact previews for a narrowly scoped, user-selected app set without storing
-   notification content.
-4. Validate Do Not Disturb / interruption-filter behavior, including restoration
+1. Add narrowly scoped preview redaction for a user-selected app set without
+   storing notification content.
+2. Submit enforcement requests only for rules that are enabled and supported.
+3. Validate Do Not Disturb / interruption-filter behavior, including restoration
    and version/OEM constraints.
-5. Add instrumentation or manual test notes for each supported action before the
+4. Add instrumentation or manual test notes for each supported action before the
    UI labels any action as implemented.
+5. Repeat the notification-listener matrix on a physical device across OEM
+   variants before treating observation as production-ready.

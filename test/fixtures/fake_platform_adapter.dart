@@ -1,4 +1,5 @@
 import 'package:quietdude/domain/actions/rule_action.dart';
+import 'package:quietdude/domain/models/notification_listener.dart';
 import 'package:quietdude/domain/models/platform_capability.dart';
 import 'package:quietdude/domain/models/rule_execution.dart';
 import 'package:quietdude/platform/contracts/platform_adapter.dart';
@@ -20,15 +21,51 @@ class FakePlatformAdapter implements PlatformAdapter {
     this.enforcementResult,
     this.permissionState = PermissionState.denied,
     this.settingsAccessGranted = false,
-  });
+    this.listenerStatus = const NotificationListenerStatus(
+      access: NotificationAccessStatus.notGranted,
+      connection: NotificationConnectionStatus.unavailable,
+    ),
+    this.openListenerSettingsResult = false,
+    Stream<SanitizedNotificationEvent>? notificationEvents,
+    Stream<NotificationConnectionStatus>? connectionEvents,
+  }) : notificationEventStream = notificationEvents ?? const Stream.empty(),
+       connectionEventStream = connectionEvents ?? const Stream.empty();
 
   final List<PlatformCapability> capabilities;
   final RuleExecutionResult? enforcementResult;
   final PermissionState permissionState;
   final bool settingsAccessGranted;
+  NotificationListenerStatus listenerStatus;
+  final bool openListenerSettingsResult;
+  final Stream<SanitizedNotificationEvent> notificationEventStream;
+  final Stream<NotificationConnectionStatus> connectionEventStream;
 
   int enforcementRequests = 0;
+  int listenerStatusRequests = 0;
+  int openListenerSettingsRequests = 0;
   EnforcementRequest? lastRequest;
+
+  @override
+  Stream<SanitizedNotificationEvent> get notificationEvents {
+    return notificationEventStream;
+  }
+
+  @override
+  Stream<NotificationConnectionStatus> get notificationConnectionEvents {
+    return connectionEventStream;
+  }
+
+  @override
+  Future<NotificationListenerStatus> getNotificationListenerStatus() async {
+    listenerStatusRequests++;
+    return listenerStatus;
+  }
+
+  @override
+  Future<bool> openNotificationListenerSettings() async {
+    openListenerSettingsRequests++;
+    return openListenerSettingsResult;
+  }
 
   @override
   Future<List<PlatformCapability>> getCapabilities() async => capabilities;
